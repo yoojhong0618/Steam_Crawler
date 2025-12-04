@@ -25,7 +25,7 @@ with st.sidebar:
 if menu == "Steam (스팀)":
     tab1, tab2 = st.tabs(["⭐ 리뷰 수집", "🗣️ 토론장 수집"])
     
-    # [TAB 1] 리뷰 수집 (기존 동일)
+    # [TAB 1] 리뷰 수집 (기존과 동일)
     with tab1:
         col1, col2 = st.columns(2)
         with col1:
@@ -76,13 +76,12 @@ if menu == "Steam (스팀)":
             except Exception as e:
                 st.error(f"에러: {e}")
 
-    # [TAB 2] 토론장 수집 (App ID 입력 방식으로 복귀 + 자동 URL 생성)
+    # [TAB 2] 토론장 수집 (0번 방 강제 입장!)
     with tab2:
-        st.info("💡 App ID만 입력하면 자동으로 토론장 주소를 찾아갑니다.")
+        st.info("💡 App ID만 넣으세요. 자동으로 '일반 토론장(General)'을 찾아갑니다.")
         
         col_t1, col_t2 = st.columns(2)
         with col_t1:
-            # 다시 ID 입력칸으로 변경!
             app_id_discuss = st.text_input("App ID (토론장용)", value="1562700")
         with col_t2:
             pages_to_crawl = st.number_input("탐색 페이지 수", min_value=1, max_value=50, value=3)
@@ -93,15 +92,14 @@ if menu == "Steam (스팀)":
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # 👇 [자동 URL 생성] 질문자님이 원하시던 기능입니다.
-            # 뒤에 0을 붙이지 않고, 그냥 /discussions/ 까지만 입력하면 스팀이 알아서 메인 토론장으로 보내줍니다.
-            base_url = f"https://steamcommunity.com/app/{app_id_discuss}/discussions/"
+            # 👇 [여기가 수정되었습니다] 
+            # 주소 끝에 /0/ 을 붙여서 로비가 아니라 '일반 토론장' 방으로 바로 꽂아줍니다.
+            base_url = f"https://steamcommunity.com/app/{app_id_discuss}/discussions/0/"
             
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
             }
-            # 성인 인증 쿠키 (Age Gate 통과용)
             cookies = {
                 'wants_mature_content': '1',
                 'birthtime': '660000001',
@@ -110,7 +108,7 @@ if menu == "Steam (스팀)":
             
             try:
                 for p in range(pages_to_crawl):
-                    # 페이지 번호 붙이기 (?fp=1, ?fp=2 ...)
+                    # 페이지 번호 붙이기
                     full_url = f"{base_url}?fp={p+1}"
                     
                     res = requests.get(full_url, headers=headers, cookies=cookies) 
@@ -120,10 +118,10 @@ if menu == "Steam (스팀)":
                     
                     if len(topics) == 0:
                         st.warning(f"⚠️ {p+1}페이지에서 글을 못 찾았습니다.")
-                        # 혹시 ID가 틀렸거나 성인인증이 막혔을 때를 대비한 힌트
                         with st.expander("개발자용 힌트"):
-                            st.write(f"접속 시도 URL: {full_url}")
-                            st.write("페이지 제목: " + (soup.title.string.strip() if soup.title else "없음"))
+                            st.write(f"접속 주소: {full_url}")
+                            # 0번 방이 없을 수도 있으니, 그럴 땐 /discussions/ 로비 주소를 보여줍니다.
+                            st.write(f"혹시 이 게임은 '일반 토론장'이 없나요? -> https://steamcommunity.com/app/{app_id_discuss}/discussions/")
                         break 
                     
                     status_text.text(f"📄 {p+1}페이지 수집 중... ({len(topics)}개 글 발견)")
