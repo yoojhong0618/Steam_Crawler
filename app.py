@@ -6,16 +6,19 @@ import time
 from datetime import datetime, timedelta
 
 # 페이지 설정
-st.set_page_config(page_title="스팀 리뷰 크롤러", layout="wide")
+st.set_page_config(page_title="스팀 리뷰 수집기", layout="wide")
 
 # --- 🔐 비밀번호 잠금 ---
-password = st.text_input("🔒 접속 암호 (회사용)", type="password")
+# (회사용) 문구 삭제됨
+password = st.text_input("🔒 접속 암호", type="password")
+
 if password != "smilegate":
     st.warning("권한이 없습니다.")
     st.stop()
 # ---------------------
 
-st.title("Steam 리뷰 수집기 (연결 강화판)")
+# (연결 강화판) 문구 삭제됨
+st.title("Steam 리뷰 수집기")
 
 # 사이드바 설정
 with st.sidebar:
@@ -38,7 +41,6 @@ with st.sidebar:
     # 50만 개 설정
     MAX_LIMIT = 500000 
     
-    st.info("💡 '수집 시작'을 누르면 탐색이 시작됩니다.")
     run_btn = st.button("수집 시작", type="primary")
 
 # 메인 로직
@@ -56,8 +58,7 @@ if run_btn:
         num_requests = MAX_LIMIT // 100
         
         for i in range(num_requests):
-            # 👇 [핵심 수정] URL을 직접 치지 않고, 안전하게 params로 포장해서 보냅니다.
-            # 특수문자가 섞여도 끊기지 않게 해줍니다.
+            # 안전한 통신을 위한 파라미터 포장
             params = {
                 'json': 1,
                 'cursor': cursor,
@@ -70,7 +71,6 @@ if run_btn:
             # 요청 보내기
             response = requests.get(f"https://store.steampowered.com/appreviews/{app_id}", params=params)
             
-            # 응답 확인
             if response.status_code != 200:
                 st.error(f"서버 연결 실패 (코드: {response.status_code})")
                 break
@@ -94,7 +94,6 @@ if run_btn:
                     }
                     all_reviews.append(review_data)
                 
-                # 다음 페이지 티켓 갱신
                 cursor = data['cursor']
                 
                 # 상태 업데이트
@@ -107,7 +106,7 @@ if run_btn:
                     st.success(f"목표 날짜({start_date})에 도달했습니다! ✅")
                     break
                 
-                time.sleep(0.25) # 조금 더 안전하게 쉬어가기
+                time.sleep(0.25)
             else:
                 st.warning("더 이상 리뷰가 없습니다. (탐색 종료)")
                 break
@@ -120,7 +119,7 @@ if run_btn:
             
             st.divider()
             if len(filtered_df) > 0:
-                st.markdown(f"### 🎁 결과: {len(filtered_df)}개 발견")
+                st.markdown(f"### 결과: {len(filtered_df)}개 발견")
                 st.dataframe(filtered_df)
                 
                 csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
