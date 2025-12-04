@@ -28,7 +28,7 @@ with st.sidebar:
 if menu == "Steam (스팀)":
     tab1, tab2 = st.tabs(["⭐ 리뷰 수집", "🗣️ 토론장 수집"])
     
-    # [TAB 1] 리뷰 수집 (API)
+    # [TAB 1] 리뷰 수집 (API) - 기존과 동일
     with tab1:
         col1, col2 = st.columns(2)
         with col1:
@@ -79,7 +79,7 @@ if menu == "Steam (스팀)":
             except Exception as e:
                 st.error(f"에러: {e}")
 
-    # [TAB 2] 토론장 수집 (헤더 추가 & 문법 오류 수정됨)
+    # [TAB 2] 토론장 수집 (쿠키 추가됨! 🍪)
     with tab2:
         st.info("토론장은 직접 페이지를 방문하여 수집합니다.")
         col_t1, col_t2 = st.columns(2)
@@ -94,16 +94,25 @@ if menu == "Steam (스팀)":
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # 봇 차단 방지용 헤더
+            # 👇 [핵심] 1. 봇 차단 방지용 헤더
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                 'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
             }
             
+            # 👇 [핵심] 2. 성인 인증 프리패스 쿠키 (이게 없어서 빈 화면이 떴던 겁니다)
+            cookies = {
+                'wants_mature_content': '1',  # 성인 콘텐츠 볼래요
+                'birthtime': '944006401',     # 생일 (대충 성인으로 설정)
+                'lastagecheckage': '1-January-2000'
+            }
+            
             try:
                 for p in range(pages_to_crawl):
                     url = f"https://steamcommunity.com/app/{app_id_discuss}/discussions/0/?fp={p+1}"
-                    res = requests.get(url, headers=headers) 
+                    
+                    # cookies=cookies 를 추가해서 요청!
+                    res = requests.get(url, headers=headers, cookies=cookies) 
                     soup = BeautifulSoup(res.text, 'html.parser')
                     
                     topics = soup.find_all('a', class_='forum_topic_link')
@@ -119,8 +128,8 @@ if menu == "Steam (스팀)":
                         title = topic.text.strip()
                         link = topic['href']
                         
-                        # 상세 페이지 접속
-                        sub_res = requests.get(link, headers=headers)
+                        # 상세 페이지도 쿠키 들고 입장
+                        sub_res = requests.get(link, headers=headers, cookies=cookies)
                         sub_soup = BeautifulSoup(sub_res.text, 'html.parser')
                         
                         content_div = sub_soup.find('div', class_='forum_op')
@@ -129,28 +138,30 @@ if menu == "Steam (스팀)":
                             main_text = content_div.find('div', class_='content').text.strip()
                             date_posted = content_div.find('div', class_='date').text.strip()
                             
-                            # 게시글 저장 (여기서 괄호를 확실히 닫았습니다!)
-                            discussion_data.append({
+                            # 괄호 실수 방지용 변수 처리
+                            post_item = {
                                 '구분': '게시글', 
                                 '제목': title, 
                                 '작성자': author, 
                                 '내용': main_text, 
                                 '작성일': date_posted
-                            })
+                            }
+                            discussion_data.append(post_item)
                             
-                            # 댓글 수집 (들여쓰기 주의)
                             comments = sub_soup.find_all('div', class_='commentthread_comment')
                             for comm in comments:
                                 try:
                                     c_author = comm.find('bdi').text.strip()
                                     c_text = comm.find('div', class_='commentthread_comment_text').text.strip()
-                                    discussion_data.append({
+                                    
+                                    comment_item = {
                                         '구분': 'ㄴ댓글', 
                                         '제목': '-', 
                                         '작성자': c_author, 
                                         '내용': c_text, 
                                         '작성일': '-'
-                                    })
+                                    }
+                                    discussion_data.append(comment_item)
                                 except: 
                                     continue
                         
@@ -164,7 +175,7 @@ if menu == "Steam (스팀)":
                     st.dataframe(df)
                     st.download_button("토론장 엑셀 다운로드", df.to_csv(index=False).encode('utf-8-sig'), "steam_discuss.csv")
                 else:
-                    st.error("수집된 데이터가 없습니다.")
+                    st.error("수집된 데이터가 없습니다. (여전히 안 된다면 App ID를 확인해주세요)")
                     
             except Exception as e:
                 st.error(f"오류: {e}")
