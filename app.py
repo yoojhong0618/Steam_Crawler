@@ -25,7 +25,7 @@ with st.sidebar:
 if menu == "Steam (스팀)":
     tab1, tab2 = st.tabs(["⭐ 리뷰 수집", "🗣️ 토론장 수집"])
     
-    # [TAB 1] 리뷰 수집 (기존 유지)
+    # [TAB 1] 리뷰 수집 (기존 동일)
     with tab1:
         col1, col2 = st.columns(2)
         with col1:
@@ -76,48 +76,57 @@ if menu == "Steam (스팀)":
             except Exception as e:
                 st.error(f"에러: {e}")
 
-    # [TAB 2] 토론장 수집 (다시 App ID 입력 방식으로 복구 + 자동 0번방 이동)
+    # [TAB 2] 토론장 수집 (App ID 입력 방식으로 복귀 + 자동 URL 생성)
     with tab2:
-        st.info("토론장 '일반(General)' 게시판을 수집합니다.")
+        st.info("💡 App ID만 입력하면 자동으로 토론장 주소를 찾아갑니다.")
         
         col_t1, col_t2 = st.columns(2)
         with col_t1:
-            # 다시 App ID 입력 방식으로!
+            # 다시 ID 입력칸으로 변경!
             app_id_discuss = st.text_input("App ID (토론장용)", value="1562700")
         with col_t2:
             pages_to_crawl = st.number_input("탐색 페이지 수", min_value=1, max_value=50, value=3)
         
         if st.button("토론글 수집 시작", key="btn_discuss"):
-            st.toast("토론장 방문 중...")
+            st.toast("토론장 접속 중...")
             discussion_data = []
             progress_bar = st.progress(0)
             status_text = st.empty()
+            
+            # 👇 [자동 URL 생성] 질문자님이 원하시던 기능입니다.
+            # 뒤에 0을 붙이지 않고, 그냥 /discussions/ 까지만 입력하면 스팀이 알아서 메인 토론장으로 보내줍니다.
+            base_url = f"https://steamcommunity.com/app/{app_id_discuss}/discussions/"
             
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
             }
-            # 성인 인증 쿠키 유지
-            cookies = {'wants_mature_content': '1', 'birthtime': '944006401', 'lastagecheckage': '1-January-2000'}
+            # 성인 인증 쿠키 (Age Gate 통과용)
+            cookies = {
+                'wants_mature_content': '1',
+                'birthtime': '660000001',
+                'lastagecheckage': '1-January-1990'
+            }
             
             try:
                 for p in range(pages_to_crawl):
-                    # 👇 [핵심 수정] 사용자는 ID만 넣었지만, 코드가 뒤에 '/discussions/0/'을 붙여줍니다.
-                    # 이러면 로비가 아니라 '0번 방'으로 바로 꽂아줍니다.
-                    url = f"https://steamcommunity.com/app/{app_id_discuss}/discussions/0/?fp={p+1}"
+                    # 페이지 번호 붙이기 (?fp=1, ?fp=2 ...)
+                    full_url = f"{base_url}?fp={p+1}"
                     
-                    res = requests.get(url, headers=headers, cookies=cookies) 
+                    res = requests.get(full_url, headers=headers, cookies=cookies) 
                     soup = BeautifulSoup(res.text, 'html.parser')
                     
                     topics = soup.find_all('a', class_='forum_topic_link')
                     
                     if len(topics) == 0:
-                        st.warning(f"{p+1}페이지에서 글을 못 찾았습니다. (페이지 끝이거나 차단됨)")
-                        # 디버깅: 혹시 0번방이 아닌 경우를 대비해 URL 확인용 출력
-                        # st.caption(f"접속 시도한 주소: {url}") 
+                        st.warning(f"⚠️ {p+1}페이지에서 글을 못 찾았습니다.")
+                        # 혹시 ID가 틀렸거나 성인인증이 막혔을 때를 대비한 힌트
+                        with st.expander("개발자용 힌트"):
+                            st.write(f"접속 시도 URL: {full_url}")
+                            st.write("페이지 제목: " + (soup.title.string.strip() if soup.title else "없음"))
                         break 
                     
-                    status_text.text(f"{p+1}페이지 수집 중... ({len(topics)}개 글 발견)")
+                    status_text.text(f"📄 {p+1}페이지 수집 중... ({len(topics)}개 글 발견)")
                     
                     for topic in topics:
                         title = topic.text.strip()
@@ -148,11 +157,11 @@ if menu == "Steam (스팀)":
                 
                 if discussion_data:
                     df = pd.DataFrame(discussion_data)
-                    st.success(f"{len(df)}개 수집 완료!")
+                    st.success(f"🎉 수집 완료! 총 {len(df)}개의 데이터")
                     st.dataframe(df)
                     st.download_button("토론장 엑셀 다운로드", df.to_csv(index=False).encode('utf-8-sig'), "steam_discuss.csv")
                 else:
-                    st.error("수집된 데이터가 없습니다.")
+                    st.error("데이터를 찾지 못했습니다.")
                     
             except Exception as e:
                 st.error(f"오류: {e}")
