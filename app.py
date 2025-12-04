@@ -15,49 +15,66 @@ if password != "smilegate":
     st.stop()
 # ---------------------
 
-st.title("Steam 리뷰 수집기")
+st.title("Steam 리뷰 수집기 (연결 강화판)")
 
 # 사이드바 설정
 with st.sidebar:
     st.header("설정")
-    app_id = st.text_input("App ID", value="578080")
+    app_id = st.text_input("App ID", value="1562700") # 산나비 ID 기본값
     
     st.divider()
     
     st.subheader("📅 기간 설정")
     col1, col2 = st.columns(2)
     with col1:
-        start_date = st.date_input("시작일", datetime.now() - timedelta(days=30))
+        start_date = st.date_input("시작일", datetime(2025, 2, 1)) # 2월 1일 기본값
     with col2:
         end_date = st.date_input("종료일", datetime.now())
         
     st.divider()
     
-    language = st.selectbox("언어", ["english", "koreana", "japanese", "schinese", "all"])
+    language = st.selectbox("언어", ["all", "koreana", "english", "japanese", "schinese"], index=0)
     
-    # 30만 개 고정 (사용자에게 노출 X)
-    review_limit = 300000 
+    # 50만 개 설정
+    MAX_LIMIT = 500000 
     
-    st.write("")
+    st.info("💡 '수집 시작'을 누르면 탐색이 시작됩니다.")
     run_btn = st.button("수집 시작", type="primary")
 
 # 메인 로직
 if run_btn:
-    st.info(f"탐색 시작: {start_date} ~ {end_date}")
+    st.toast("탐색을 시작합니다... 🚀")
     
     all_reviews = []
     cursor = '*'
     
+    # 상태 표시창
     progress_bar = st.progress(0)
-    status_text = st.empty() 
-    date_monitor = st.empty()
+    status_box = st.info(f"탐색 시작... (목표: {start_date} 까지)")
     
     try:
-        num_requests = review_limit // 100
+        num_requests = MAX_LIMIT // 100
         
         for i in range(num_requests):
-            url = f"https://store.steampowered.com/appreviews/{app_id}?json=1&cursor={cursor}&language={language}&num_per_page=100&purchase_type=all&filter=recent"
-            response = requests.get(url)
+            # 👇 [핵심 수정] URL을 직접 치지 않고, 안전하게 params로 포장해서 보냅니다.
+            # 특수문자가 섞여도 끊기지 않게 해줍니다.
+            params = {
+                'json': 1,
+                'cursor': cursor,
+                'language': language,
+                'num_per_page': 100,
+                'purchase_type': 'all',
+                'filter': 'recent'
+            }
+            
+            # 요청 보내기
+            response = requests.get(f"https://store.steampowered.com/appreviews/{app_id}", params=params)
+            
+            # 응답 확인
+            if response.status_code != 200:
+                st.error(f"서버 연결 실패 (코드: {response.status_code})")
+                break
+                
             data = response.json()
             
             if 'reviews' in data and len(data['reviews']) > 0:
@@ -77,21 +94,22 @@ if run_btn:
                     }
                     all_reviews.append(review_data)
                 
+                # 다음 페이지 티켓 갱신
                 cursor = data['cursor']
                 
-                # [수정됨] 꾸밈 없는 정직한 진행률 (30만 개 기준이라 바가 거의 안 움직일 수 있음)
-                progress_bar.progress((i + 1) / num_requests)
-                status_text.text(f"수집 중: {len(all_reviews)}개")
+                # 상태 업데이트
+                progress_bar.progress(min((i + 1) / 100, 0.95))
+                status_box.info(f"현재 **{len(all_reviews)}개** 수집 중... (현재 위치: **{current_date}**)")
                 
-                date_monitor.info(f"현재 탐색 날짜: {current_date}")
-                
-                # 목표 날짜 도달 시 즉시 종료
+                # 날짜 도달 체크
                 if current_date < start_date:
                     progress_bar.progress(100)
+                    st.success(f"목표 날짜({start_date})에 도달했습니다! ✅")
                     break
                 
-                time.sleep(0.2)
+                time.sleep(0.25) # 조금 더 안전하게 쉬어가기
             else:
+                st.warning("더 이상 리뷰가 없습니다. (탐색 종료)")
                 break
         
         # 결과 처리
@@ -102,7 +120,7 @@ if run_btn:
             
             st.divider()
             if len(filtered_df) > 0:
-                st.write(f"결과: {len(filtered_df)}개 (전체 탐색: {len(df)}개)")
+                st.markdown(f"### 🎁 결과: {len(filtered_df)}개 발견")
                 st.dataframe(filtered_df)
                 
                 csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
@@ -113,7 +131,8 @@ if run_btn:
                     mime='text/csv',
                 )
             else:
-                st.error("해당 기간의 데이터 없음")
+                st.error("설정한 기간 내의 데이터가 없습니다.")
+                st.caption(f"시스템은 {current_date}까지 확인했습니다.")
                 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"오류 발생: {e}")
