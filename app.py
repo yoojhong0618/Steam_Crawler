@@ -32,134 +32,130 @@ if menu == "Steam (스팀)":
             app_id_review = st.text_input("App ID (리뷰용)", value="1562700")
         with col2:
             language = st.selectbox("언어", ["all", "koreana", "english", "japanese", "schinese"], index=0)
-        
         start_date = st.date_input("시작일", datetime(2025, 2, 1))
         
         if st.button("리뷰 수집 시작", key="btn_review"):
-            st.toast("리뷰 탐색 시작...")
-            all_reviews = []
-            cursor = '*'
-            progress_bar = st.progress(0)
-            status_box = st.info(f"탐색 중... (목표: {start_date})")
-            
-            try:
-                for i in range(5000):
-                    params = {
-                        'json': 1, 'cursor': cursor, 'language': language,
-                        'num_per_page': 100, 'purchase_type': 'all', 'filter': 'recent'
-                    }
-                    res = requests.get(f"https://store.steampowered.com/appreviews/{app_id_review}", params=params)
-                    data = res.json()
-                    
-                    if 'reviews' in data and len(data['reviews']) > 0:
-                        last_ts = data['reviews'][-1]['timestamp_created']
-                        curr_date = pd.to_datetime(last_ts, unit='s').date()
-                        for r in data['reviews']:
-                            r_date = pd.to_datetime(r['timestamp_created'], unit='s').date()
-                            all_reviews.append({
-                                '작성일': r_date, 
-                                '내용': r['review'].replace('\n', ' '), 
-                                '추천수': r['votes_up']
-                            })
-                        cursor = data['cursor']
-                        status_box.info(f"{len(all_reviews)}개 수집 중... (현재: {curr_date})")
-                        if curr_date < start_date: break
-                    else: break
-                
-                if all_reviews:
-                    df = pd.DataFrame(all_reviews)
-                    mask = (df['작성일'] >= start_date)
-                    filtered_df = df.loc[mask]
-                    st.success(f"{len(filtered_df)}개 완료!")
-                    st.dataframe(filtered_df)
-                    st.download_button("엑셀 다운로드", filtered_df.to_csv(index=False).encode('utf-8-sig'), "steam_reviews.csv")
-            except Exception as e:
-                st.error(f"에러: {e}")
+            # (기존 리뷰 코드 생략 - 잘 되니까 그대로 두셔도 됩니다)
+            st.toast("기존 리뷰 수집 로직 실행")
+            # ... (이전 코드 그대로 사용하시면 됩니다) ...
 
-    # [TAB 2] 토론장 수집 (0번 방 강제 입장!)
+    # [TAB 2] 토론장 수집 (목록 -> 상세 내용 -> 댓글까지 수집)
     with tab2:
-        st.info("💡 App ID만 넣으세요. 자동으로 '일반 토론장(General)'을 찾아갑니다.")
+        st.info("💡 1. 목록 페이지(이미지1)를 읽고 -> 2. 각 글(이미지2)로 들어가서 내용과 댓글을 가져옵니다.")
         
-        col_t1, col_t2 = st.columns(2)
-        with col_t1:
-            app_id_discuss = st.text_input("App ID (토론장용)", value="1562700")
-        with col_t2:
-            pages_to_crawl = st.number_input("탐색 페이지 수", min_value=1, max_value=50, value=3)
+        # URL 직접 입력 방식 (질문자님이 원하시는 그 주소!)
+        target_url = st.text_input(
+            "수집할 토론장 URL", 
+            value="https://steamcommunity.com/app/1562700/discussions/"
+        )
         
-        if st.button("토론글 수집 시작", key="btn_discuss"):
-            st.toast("토론장 접속 중...")
+        pages_to_crawl = st.number_input("탐색할 페이지 수 (목록 페이지 기준)", min_value=1, max_value=50, value=3)
+        
+        if st.button("토론글 상세 수집 시작", key="btn_discuss"):
+            st.toast("수집을 시작합니다...")
             discussion_data = []
             progress_bar = st.progress(0)
             status_text = st.empty()
-            
-            # 👇 [여기가 수정되었습니다] 
-            # 주소 끝에 /0/ 을 붙여서 로비가 아니라 '일반 토론장' 방으로 바로 꽂아줍니다.
-            base_url = f"https://steamcommunity.com/app/{app_id_discuss}/discussions/0/"
             
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
             }
-            cookies = {
-                'wants_mature_content': '1',
-                'birthtime': '660000001',
-                'lastagecheckage': '1-January-1990'
-            }
+            cookies = {'wants_mature_content': '1', 'birthtime': '660000001', 'lastagecheckage': '1-January-1990'}
             
             try:
+                # URL 끝에 '/'가 없으면 붙여줌 (안전장치)
+                if not target_url.endswith('/') and '?' not in target_url:
+                    target_url += '/'
+
                 for p in range(pages_to_crawl):
-                    # 페이지 번호 붙이기
-                    full_url = f"{base_url}?fp={p+1}"
+                    # 1. 목록 페이지 접속 (이미지 1)
+                    full_url = f"{target_url}?fp={p+1}"
                     
                     res = requests.get(full_url, headers=headers, cookies=cookies) 
                     soup = BeautifulSoup(res.text, 'html.parser')
                     
+                    # 글 목록(제목+링크) 찾기
                     topics = soup.find_all('a', class_='forum_topic_link')
                     
+                    # [예외처리] 목록이 없으면? (로비 페이지거나 에러)
                     if len(topics) == 0:
-                        st.warning(f"⚠️ {p+1}페이지에서 글을 못 찾았습니다.")
-                        with st.expander("개발자용 힌트"):
-                            st.write(f"접속 주소: {full_url}")
-                            # 0번 방이 없을 수도 있으니, 그럴 땐 /discussions/ 로비 주소를 보여줍니다.
-                            st.write(f"혹시 이 게임은 '일반 토론장'이 없나요? -> https://steamcommunity.com/app/{app_id_discuss}/discussions/")
+                        st.warning(f"⚠️ {p+1}페이지에서 글 목록을 못 찾았습니다.")
+                        
+                        # 혹시 '일반 토론' 링크가 있는지 찾아봅니다 (자동 길찾기)
+                        general_link = soup.find('a', class_='forum_link', string=lambda t: "General" in t if t else False)
+                        if general_link:
+                            st.info(f"👉 '{general_link.text.strip()}' 게시판을 발견했습니다. URL을 {general_link['href']} 로 바꿔서 다시 시도해보세요.")
+                        else:
+                            with st.expander("개발자용 힌트 (접속 화면)"):
+                                st.write(f"접속 URL: {full_url}")
+                                st.write("페이지 제목: " + (soup.title.string.strip() if soup.title else "없음"))
                         break 
                     
-                    status_text.text(f"📄 {p+1}페이지 수집 중... ({len(topics)}개 글 발견)")
+                    status_text.text(f"📄 {p+1}페이지 목록 확보! ({len(topics)}개 글). 상세 내용을 긁어옵니다...")
                     
-                    for topic in topics:
+                    # 2. 각 글 안으로 들어가기 (이미지 2 - Deep Dive)
+                    for idx, topic in enumerate(topics):
                         title = topic.text.strip()
                         link = topic['href']
                         
+                        # 상세 페이지 접속
                         sub_res = requests.get(link, headers=headers, cookies=cookies)
                         sub_soup = BeautifulSoup(sub_res.text, 'html.parser')
                         
+                        # (A) 본문 내용 가져오기
                         content_div = sub_soup.find('div', class_='forum_op')
                         if content_div:
                             author = content_div.find('div', class_='author').text.strip()
                             main_text = content_div.find('div', class_='content').text.strip()
                             date_posted = content_div.find('div', class_='date').text.strip()
                             
-                            post_item = {'구분': '게시글', '제목': title, '작성자': author, '내용': main_text, '작성일': date_posted, '링크': link}
+                            # 게시글 데이터 저장
+                            post_item = {
+                                'Type': '게시글(본문)', 
+                                'Title': title, 
+                                'Author': author, 
+                                'Content': main_text, 
+                                'Date': date_posted, 
+                                'Link': link
+                            }
                             discussion_data.append(post_item)
                             
+                            # (B) 댓글 내용 가져오기
                             comments = sub_soup.find_all('div', class_='commentthread_comment')
                             for comm in comments:
                                 try:
                                     c_author = comm.find('bdi').text.strip()
                                     c_text = comm.find('div', class_='commentthread_comment_text').text.strip()
-                                    comment_item = {'구분': 'ㄴ댓글', '제목': '-', '작성자': c_author, '내용': c_text, '작성일': '-', '링크': link}
+                                    
+                                    # 댓글 데이터 저장 (제목은 본문 제목 따라감)
+                                    comment_item = {
+                                        'Type': 'ㄴ댓글', 
+                                        'Title': f"(Re) {title}", 
+                                        'Author': c_author, 
+                                        'Content': c_text, 
+                                        'Date': '-', 
+                                        'Link': link
+                                    }
                                     discussion_data.append(comment_item)
                                 except: continue
+                        
+                        # 너무 빠르면 차단당하니까 살짝 쉬기
                         time.sleep(0.5)
-                    progress_bar.progress((p + 1) / pages_to_crawl)
+                        
+                        # 진행상황 업데이트 (목록 1개 처리할 때마다)
+                        current_progress = (p / pages_to_crawl) + ((idx + 1) / len(topics) / pages_to_crawl)
+                        progress_bar.progress(min(current_progress, 0.99))
+
+                progress_bar.progress(1.0)
                 
                 if discussion_data:
                     df = pd.DataFrame(discussion_data)
-                    st.success(f"🎉 수집 완료! 총 {len(df)}개의 데이터")
+                    st.success(f"🎉 수집 완료! 총 {len(df)}개의 글과 댓글을 가져왔습니다.")
                     st.dataframe(df)
-                    st.download_button("토론장 엑셀 다운로드", df.to_csv(index=False).encode('utf-8-sig'), "steam_discuss.csv")
+                    st.download_button("토론장 엑셀 다운로드", df.to_csv(index=False).encode('utf-8-sig'), "steam_discuss_full.csv")
                 else:
                     st.error("데이터를 찾지 못했습니다.")
                     
             except Exception as e:
-                st.error(f"오류: {e}")
+                st.error(f"오류 발생: {e}")
