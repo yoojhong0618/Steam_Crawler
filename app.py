@@ -478,16 +478,20 @@ elif menu == "디시인사이드":
         dc_data = []
         status_box = st.status("갤러리에 접속 중입니다...", expanded=True)
         
-        # 주소 결정 (마이너 갤러리 vs 정식 갤러리)
+# [수정] 주소 결정 로직
         base_url = "https://gall.dcinside.com/mgallery/board/lists/" if is_minor else "https://gall.dcinside.com/board/lists/"
         
+        # [핵심] Referer를 '현재 접속하려는 갤러리 주소'로 설정해야 봇 차단을 피할 수 있습니다.
+        target_referer = f"{base_url}?id={gallery_id}"
+        
         headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Referer': 'https://gall.dcinside.com/',
-        'Connection': 'keep-alive'
-    }
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Referer': target_referer,  # 여기가 핵심 변경 사항입니다!
+            'Connection': 'keep-alive',
+            'Cache-Control': 'max-age=0' 
+        }
 
         try:
             progress_bar = st.progress(0)
