@@ -25,7 +25,7 @@ st.title("Steam & YouTube 데이터 수집기")
 # --- 사이드바 ---
 with st.sidebar:
     st.header("설정")
-    menu = st.selectbox("분석 채널", ["Steam (스팀)", "YouTube (유튜브)", "4chan (해외 포럼)"])
+    menu = st.selectbox("분석 채널", ["Steam (스팀)", "YouTube (유튜브)", "4chan (해외 포럼)", "디시인사이드"])
     st.divider()
 
 # =========================================================
@@ -452,5 +452,112 @@ elif menu == "4chan (해외 포럼)":
             else:
                 st.error("4chan 서버 접속에 실패했습니다.")
                 
+        except Exception as e:
+            st.error(f"오류 발생: {e}")
+
+# =========================================================
+# [SECTION 4] DC Inside (디시인사이드) - 한국 코어 커뮤니티
+# =========================================================
+elif menu == "디시인사이드":
+    st.subheader("🔵 DC Inside 갤러리 수집")
+    st.caption("국내 최대 커뮤니티의 특정 갤러리 반응을 수집합니다. (검색어 포함)")
+
+    # 1. 설정 입력 (2단 컬럼)
+    col1, col2 = st.columns(2)
+    with col1:
+        # 갤러리 ID는 URL에서 ?id= 뒤에 오는 값입니다.
+        gallery_id = st.text_input("갤러리 ID (예: indiegame, aoegame)", value="indiegame")
+        is_minor = st.checkbox("마이너 갤러리 여부", value=True, help="체크 시 '마이너 갤러리' 주소로 탐색합니다. (대부분의 게임 갤러리는 마이너입니다.)")
+    with col2:
+        keyword = st.text_input("검색어 (옵션, 비워두면 전체 수집)", value="")
+        pages_to_crawl = st.number_input("수집할 페이지 수", min_value=1, max_value=20, value=3)
+
+    st.info("💡 팁: 갤러리 ID는 주소창의 `id=xxxxx` 부분입니다. (예: `.../lists/?id=indiegame` -> `indiegame`)")
+
+    if st.button("디시인사이드 수집 시작", key="btn_dc"):
+        dc_data = []
+        status_box = st.status("갤러리에 접속 중입니다...", expanded=True)
+        
+        # 주소 결정 (마이너 갤러리 vs 정식 갤러리)
+        base_url = "https://gall.dcinside.com/mgallery/board/lists/" if is_minor else "https://gall.dcinside.com/board/lists/"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+
+        try:
+            progress_bar = st.progress(0)
+            
+            for i in range(pages_to_crawl):
+                page_num = i + 1
+                
+                # 파라미터 설정
+                params = {'id': gallery_id, 'page': page_num}
+                if keyword:
+                    params['s_type'] = 'search_subject_memo' # 제목+내용 검색
+                    params['s_keyword'] = keyword
+
+                status_box.write(f"📄 {page_num}페이지 읽는 중...")
+                
+                res = requests.get(base_url, headers=headers, params=params)
+                
+                if res.status_code != 200:
+                    st.error(f"페이지 접속 실패 (코드: {res.status_code}) - 갤러리 ID나 마이너 여부를 확인하세요.")
+                    break
+                
+                soup = BeautifulSoup(res.text, 'html.parser')
+                
+                # 게시글 리스트 행(tr) 찾기 (디시 클래스 구조: .ub-content)
+                rows = soup.find_all('tr', class_='ub-content')
+                
+                if not rows:
+                    status_box.warning(f"{page_num}페이지에서 글을 찾지 못했습니다. (마지막 페이지거나 갤러리 ID 오류)")
+                    break
+
+                for row in rows:
+                    try:
+                        # 공지사항/설문 제외
+                        if 'ub-notice' in row.get('class', []): continue
+                        
+                        # 데이터 추출
+                        title_tag = row.find('td', class_='gall_tit').find('a')
+                        title = title_tag.text.strip()
+                        link = "https://gall.dcinside.com" + title_tag['href']
+                        
+                        writer_tag = row.find('td', class_='gall_writer')
+                        writer = writer_tag.get('data-nick', 'ㅇㅇ')
+                        
+                        date = row.find('td', class_='gall_date').text.strip()
+                        views = row.find('td', class_='gall_count').text.strip()
+                        recommend = row.find('td', class_='gall_recommend').text.strip()
+                        
+                        dc_data.append({
+                            '갤러리ID': gallery_id,
+                            '제목': title,
+                            '작성자': writer,
+                            '날짜': date,
+                            '조회수': views,
+                            '추천수': recommend,
+                            '링크': link
+                        })
+                    except Exception as e:
+                        continue # 파싱 에러 난 행은 건너뜀
+                
+                time.sleep(0.5) # 서버 부하 방지 딜레이
+                progress_bar.progress((i + 1) / pages_to_crawl)
+
+            status_box.update(label="수집 완료!", state="complete")
+            
+            if dc_data:
+                df_dc = pd.DataFrame(dc_data)
+                st.success(f"총 {len(df_dc)}개의 게시글을 수집했습니다.")
+                st.dataframe(df_dc)
+                
+                # 파일명 생성
+                csv_name = f"dc_{gallery_id}_{keyword}.csv" if keyword else f"dc_{gallery_id}_recent.csv"
+                st.download_button("엑셀 다운로드", df_dc.to_csv(index=False).encode('utf-8-sig'), csv_name)
+            else:
+                st.warning("수집된 데이터가 없습니다. 갤러리 ID를 확인해주세요.")
+
         except Exception as e:
             st.error(f"오류 발생: {e}")
