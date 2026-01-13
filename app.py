@@ -25,7 +25,7 @@ st.title("Steam & YouTube 데이터 수집기")
 # --- 사이드바 ---
 with st.sidebar:
     st.header("설정")
-    menu = st.selectbox("분석 채널", ["Steam (스팀)", "YouTube (유튜브)", "Reddit (준비중)"])
+    menu = st.selectbox("분석 채널", ["Steam (스팀)", "YouTube (유튜브)", "4chan (해외 포럼)"])
     st.divider()
 
 # =========================================================
@@ -350,7 +350,107 @@ elif menu == "YouTube (유튜브)":
                         st.error(f"오류 내용: {e}")
 
 # =========================================================
-# [SECTION 3] Reddit (준비중)
+# [SECTION 3] 4chan (포챈) - 해외 코어 게이머 반응
 # =========================================================
-elif menu == "Reddit (준비중)":
-    st.info("Reddit 크롤러는 추후 업데이트 예정입니다.")
+elif menu == "Reddit (준비중)": # 메뉴 이름을 '4chan (해외 포럼)'으로 변경 추천
+    st.subheader("🍀 4chan (/v/ - Video Games) 실시간 반응")
+    st.caption("API Key 없이 해외 하드코어 게이머들의 '날것' 반응을 수집합니다.")
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        # 4chan은 검색 API가 따로 없어서, 전체 카탈로그를 가져와서 필터링해야 합니다.
+        search_keyword = st.text_input("검색어 (영어, 예: Elden Ring)", value="Elden Ring")
+    with col2:
+        result_limit = st.number_input("가져올 스레드 수", min_value=1, max_value=20, value=3)
+
+    st.info("※ 참고: 4chan은 익명 사이트 특성상 거친 표현이나 비속어가 포함될 수 있습니다.")
+
+    if st.button("4chan 데이터 수집 시작", key="btn_4chan"):
+        status_box = st.status("4chan /v/ 게시판을 스캔 중입니다...", expanded=True)
+        fourchan_data = []
+        
+        try:
+            # 1. /v/ (Video Games) 게시판의 전체 목록(Catalog) 가져오기
+            # 공식 JSON API (인증 불필요)
+            catalog_url = "https://a.4cdn.org/v/catalog.json"
+            res = requests.get(catalog_url, verify=False)
+            
+            if res.status_code == 200:
+                pages = res.json()
+                found_threads = []
+                
+                # 2. 키워드가 포함된 스레드 찾기 (제목 or 본문 검색)
+                status_box.write(f"🔍 현재 활성화된 모든 스레드에서 '{search_keyword}' 검색 중...")
+                
+                for page in pages:
+                    for thread in page.get('threads', []):
+                        # 제목(sub)이 없으면 빈 문자열, 내용(com)이 없으면 빈 문자열 처리
+                        title = thread.get('sub', '') 
+                        comment = thread.get('com', '')
+                        
+                        # 대소문자 무시하고 검색
+                        if search_keyword.lower() in title.lower() or search_keyword.lower() in comment.lower():
+                            found_threads.append(thread['no']) # 스레드 번호 저장
+                            if len(found_threads) >= result_limit:
+                                break
+                    if len(found_threads) >= result_limit:
+                        break
+                
+                if not found_threads:
+                    status_box.update(label="검색 결과가 없습니다. (현재 활성화된 스레드가 없음)", state="error")
+                else:
+                    status_box.write(f"✅ {len(found_threads)}개의 관련 스레드 발견! 상세 내용을 긁어옵니다...")
+                    
+                    # 3. 각 스레드의 댓글 상세 수집
+                    progress_bar = st.progress(0)
+                    
+                    for idx, thread_id in enumerate(found_threads):
+                        thread_url = f"https://a.4cdn.org/v/thread/{thread_id}.json"
+                        t_res = requests.get(thread_url, verify=False)
+                        
+                        if t_res.status_code == 200:
+                            posts = t_res.json().get('posts', [])
+                            
+                            # 첫 번째 글(OP) 정보
+                            op_post = posts[0]
+                            op_title = op_post.get('sub', 'No Title')
+                            # HTML 태그 제거 및 텍스트만 추출
+                            op_content = BeautifulSoup(op_post.get('com', ''), "html.parser").get_text()
+                            
+                            # 원글 저장
+                            fourchan_data.append({
+                                '구분': '원글(Thread)',
+                                '글번호': thread_id,
+                                '제목/요약': op_title,
+                                '작성일': datetime.fromtimestamp(op_post['time']).strftime('%Y-%m-%d %H:%M'),
+                                '내용': op_content,
+                                '이미지': f"https://i.4cdn.org/v/{op_post['tim']}{op_post['ext']}" if 'tim' in op_post else None
+                            })
+                            
+                            # 댓글들(Replies) 저장
+                            for reply in posts[1:]:
+                                reply_content = BeautifulSoup(reply.get('com', ''), "html.parser").get_text()
+                                fourchan_data.append({
+                                    '구분': '댓글(Reply)',
+                                    '글번호': thread_id,
+                                    '제목/요약': '-', 
+                                    '작성일': datetime.fromtimestamp(reply['time']).strftime('%Y-%m-%d %H:%M'),
+                                    '내용': reply_content,
+                                    '이미지': None
+                                })
+                        
+                        time.sleep(0.5) # 서버 부하 방지용 딜레이
+                        progress_bar.progress((idx + 1) / len(found_threads))
+                    
+                    status_box.update(label="수집 완료!", state="complete")
+                    
+                    if fourchan_data:
+                        df_4chan = pd.DataFrame(fourchan_data)
+                        st.success(f"총 {len(df_4chan)}개의 반응을 수집했습니다.")
+                        st.dataframe(df_4chan)
+                        st.download_button("엑셀 다운로드", df_4chan.to_csv(index=False).encode('utf-8-sig'), f"4chan_{search_keyword}.csv")
+            else:
+                st.error("4chan 서버 접속에 실패했습니다.")
+                
+        except Exception as e:
+            st.error(f"오류 발생: {e}")
