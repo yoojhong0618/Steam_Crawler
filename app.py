@@ -456,116 +456,63 @@ elif menu == "4chan (해외 포럼)":
             st.error(f"오류 발생: {e}")
 
 # =========================================================
-# [SECTION 4] DC Inside (디시인사이드) - 한국 코어 커뮤니티
+# [SECTION 4] DC Inside (디시인사이드) - 한국 코어 커뮤니티 (디버깅 모드)
 # =========================================================
 elif menu == "디시인사이드":
-    st.subheader("🔵 DC Inside 갤러리 수집")
-    st.caption("국내 최대 커뮤니티의 특정 갤러리 반응을 수집합니다. (검색어 포함)")
-
-    # 1. 설정 입력 (2단 컬럼)
+    st.subheader("🔵 DC Inside 갤러리 수집 (Debug Mode)")
+    
     col1, col2 = st.columns(2)
     with col1:
-        # 갤러리 ID는 URL에서 ?id= 뒤에 오는 값입니다.
-        gallery_id = st.text_input("갤러리 ID (예: indiegame, aoegame)", value="indiegame")
-        is_minor = st.checkbox("마이너 갤러리 여부", value=True, help="체크 시 '마이너 갤러리' 주소로 탐색합니다. (대부분의 게임 갤러리는 마이너입니다.)")
+        gallery_id = st.text_input("갤러리 ID", value="indiegame")
+        is_minor = st.checkbox("마이너 갤러리 여부", value=True)
     with col2:
-        keyword = st.text_input("검색어 (옵션, 비워두면 전체 수집)", value="")
-        pages_to_crawl = st.number_input("수집할 페이지 수", min_value=1, max_value=20, value=3)
+        keyword = st.text_input("검색어", value="")
+        pages_to_crawl = st.number_input("페이지 수", value=1) # 테스트니까 1페이지만
 
-    st.info("💡 팁: 갤러리 ID는 주소창의 `id=xxxxx` 부분입니다. (예: `.../lists/?id=indiegame` -> `indiegame`)")
-
-    if st.button("디시인사이드 수집 시작", key="btn_dc"):
-        dc_data = []
-        status_box = st.status("갤러리에 접속 중입니다...", expanded=True)
+    if st.button("디버깅 시작", key="btn_dc_debug"):
+        status_box = st.status("접속 테스트 중...", expanded=True)
         
-# [수정] 주소 결정 로직
+        # 주소 설정
         base_url = "https://gall.dcinside.com/mgallery/board/lists/" if is_minor else "https://gall.dcinside.com/board/lists/"
+        target_url = f"{base_url}?id={gallery_id}"
         
-        # [핵심] Referer를 '현재 접속하려는 갤러리 주소'로 설정해야 봇 차단을 피할 수 있습니다.
-        target_referer = f"{base_url}?id={gallery_id}"
-        
+        # 헤더 설정
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Referer': target_referer,  # 여기가 핵심 변경 사항입니다!
-            'Connection': 'keep-alive',
-            'Cache-Control': 'max-age=0' 
+            'Referer': target_url,
+            'Connection': 'keep-alive'
         }
 
         try:
-            progress_bar = st.progress(0)
+            # 1. 요청 보내기
+            status_box.write(f"🚀 접속 시도: {target_url}")
+            res = requests.get(base_url, headers=headers, params={'id': gallery_id, 'page': 1})
             
-            for i in range(pages_to_crawl):
-                page_num = i + 1
-                
-                # 파라미터 설정
-                params = {'id': gallery_id, 'page': page_num}
-                if keyword:
-                    params['s_type'] = 'search_subject_memo' # 제목+내용 검색
-                    params['s_keyword'] = keyword
-
-                status_box.write(f"📄 {page_num}페이지 읽는 중...")
-                
-                res = requests.get(base_url, headers=headers, params=params)
-                
-                if res.status_code != 200:
-                    st.error(f"페이지 접속 실패 (코드: {res.status_code}) - 갤러리 ID나 마이너 여부를 확인하세요.")
-                    break
-                
+            # 2. 상태 코드 확인
+            status_box.write(f"📡 응답 코드: {res.status_code}")
+            
+            if res.status_code == 200:
                 soup = BeautifulSoup(res.text, 'html.parser')
                 
-                # 게시글 리스트 행(tr) 찾기 (디시 클래스 구조: .ub-content)
+                # 3. [핵심] 페이지 제목 확인 (여기가 중요합니다!)
+                page_title = soup.title.text if soup.title else "제목 없음"
+                st.warning(f"📑 현재 수신된 페이지 제목: {page_title}")
+                
+                # 4. 데이터 유무 확인
                 rows = soup.find_all('tr', class_='ub-content')
+                st.info(f"🔍 발견된 게시글 수: {len(rows)}개")
                 
-                if not rows:
-                    status_box.warning(f"{page_num}페이지에서 글을 찾지 못했습니다. (마지막 페이지거나 갤러리 ID 오류)")
-                    break
-
-                for row in rows:
-                    try:
-                        # 공지사항/설문 제외
-                        if 'ub-notice' in row.get('class', []): continue
-                        
-                        # 데이터 추출
-                        title_tag = row.find('td', class_='gall_tit').find('a')
-                        title = title_tag.text.strip()
-                        link = "https://gall.dcinside.com" + title_tag['href']
-                        
-                        writer_tag = row.find('td', class_='gall_writer')
-                        writer = writer_tag.get('data-nick', 'ㅇㅇ')
-                        
-                        date = row.find('td', class_='gall_date').text.strip()
-                        views = row.find('td', class_='gall_count').text.strip()
-                        recommend = row.find('td', class_='gall_recommend').text.strip()
-                        
-                        dc_data.append({
-                            '갤러리ID': gallery_id,
-                            '제목': title,
-                            '작성자': writer,
-                            '날짜': date,
-                            '조회수': views,
-                            '추천수': recommend,
-                            '링크': link
-                        })
-                    except Exception as e:
-                        continue # 파싱 에러 난 행은 건너뜀
-                
-                time.sleep(0.5) # 서버 부하 방지 딜레이
-                progress_bar.progress((i + 1) / pages_to_crawl)
-
-            status_box.update(label="수집 완료!", state="complete")
+                # 5. [필살기] 만약 글이 0개라면, HTML 앞부분을 화면에 뿌려서 정체 확인
+                if len(rows) == 0:
+                    st.error("🚨 게시글을 못 찾았습니다! 서버가 보낸 HTML 일부를 확인하세요:")
+                    st.code(res.text[:2000], language='html') # HTML 앞부분 2000자 출력
+                else:
+                    st.success("✅ 데이터가 정상적으로 보입니다!")
+                    # (데이터 수집 로직은 생략, 접속 확인이 먼저임)
             
-            if dc_data:
-                df_dc = pd.DataFrame(dc_data)
-                st.success(f"총 {len(df_dc)}개의 게시글을 수집했습니다.")
-                st.dataframe(df_dc)
-                
-                # 파일명 생성
-                csv_name = f"dc_{gallery_id}_{keyword}.csv" if keyword else f"dc_{gallery_id}_recent.csv"
-                st.download_button("엑셀 다운로드", df_dc.to_csv(index=False).encode('utf-8-sig'), csv_name)
             else:
-                st.warning("수집된 데이터가 없습니다. 갤러리 ID를 확인해주세요.")
+                st.error("접속 실패! (200 OK가 아님)")
 
         except Exception as e:
-            st.error(f"오류 발생: {e}")
+            st.error(f"에러 발생: {e}")
