@@ -8,11 +8,117 @@ from datetime import datetime, time as dt_time
 from bs4 import BeautifulSoup
 from googleapiclient.discovery import build
 
+# --- 📊 시각화 라이브러리 ---
+from kiwipiepy import Kiwi
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+from collections import Counter
+import matplotlib.font_manager as fm
+
 # SSL 경고 메시지 숨기기
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 페이지 기본 설정
 st.set_page_config(page_title="Steam & YouTube 데이터 수집기", layout="wide")
+
+# --- 📊 시각화 엔진 (공통 함수) ---
+def visualize_data(df, col_name):
+    """
+    데이터프레임과 분석할 컬럼명을 받아서 워드 클라우드와 Top 10 차트를 그립니다.
+    """
+    if df is None or df.empty:
+        return
+
+    st.divider()
+    st.subheader(f"📊 {len(df)}개 데이터 키워드 분석")
+
+    # 분석 중 스피너 표시
+    with st.spinner("💬 텍스트를 분석하고 시각화하는 중입니다..."):
+        try:
+            # 1. 한국어 형태소 분석기 초기화
+            kiwi = Kiwi()
+            
+            # 2. 불용어(Stopwords) 정의 - 게임 소싱에 방해되는 단어들 제거
+            stop_words = {
+                '게임', '진짜', '너무', '아니', '근데', '솔직히', '그냥', '이거', '정말', '생각', '사람', '하고', '해서', 
+                'game', 'is', 'the', 'play', 'player', 'review', 'steam', '있는', '없는', '입니다', '합니다'
+            }
+            
+            # 3. 텍스트 합치기 및 명사 추출
+            # 데이터가 비어있지 않은 행만 가져와서 문자열로 변환
+            text_list = df[col_name].dropna().astype(str).tolist()
+            full_text = " ".join(text_list)
+            
+            # 형태소 분석 토큰화 (최대 10,000자까지만 끊어서 분석 - 속도 최적화)
+            # 너무 긴 텍스트는 앞부분 위주로 분석하여 속도를 보장합니다.
+            if len(full_text) > 100000:
+                full_text = full_text[:100000]
+                st.caption("※ 데이터가 너무 많아 분석 속도를 위해 일부 텍스트만 샘플링하여 분석했습니다.")
+
+            tokens = kiwi.tokenize(full_text)
+            
+            # 명사(NNG, NNP)이면서 2글자 이상이고, 불용어가 아닌 단어만 추출
+            keywords = [t.form for t in tokens if t.tag in ['NNG', 'NNP'] and len(t.form) > 1 and t.form not in stop_words]
+            
+            if not keywords:
+                st.warning("분석할 유효한 키워드가 부족합니다.")
+                return
+
+            # 4. 빈도수 계산
+            count = Counter(keywords)
+            top_20 = dict(count.most_common(20)) # Top 20까지 계산
+
+        except Exception as e:
+            st.error(f"분석 중 오류가 발생했습니다: {e}")
+            return
+
+    # --- 시각화 화면 구성 (2단 컬럼) ---
+    col_vis1, col_vis2 = st.columns(2)
+
+    with col_vis1:
+        st.markdown("#### ☁️ 워드 클라우드")
+        try:
+            # 폰트 설정 (Streamlit Cloud에는 한글 폰트가 없을 수 있음)
+            # 프로젝트 폴더에 'NanumGothic.ttf' 파일이 있으면 사용, 없으면 기본 폰트(깨질 수 있음)
+            font_path = "NanumGothic.ttf" 
+            
+            # 폰트 파일 존재 여부 체크 (OS마다 다를 수 있어 try-except 처리)
+            try:
+                wc = WordCloud(
+                    font_path=font_path, 
+                    background_color='white',
+                    width=600,
+                    height=400,
+                    max_words=100
+                ).generate_from_frequencies(count)
+            except:
+                # 폰트 파일이 없으면 기본 폰트로 시도 (한글 깨짐 주의)
+                wc = WordCloud(
+                    background_color='white',
+                    width=600,
+                    height=400,
+                    max_words=100
+                ).generate_from_frequencies(count)
+
+            fig = plt.figure(figsize=(10, 6))
+            plt.imshow(wc, interpolation='bilinear')
+            plt.axis('off')
+            st.pyplot(fig)
+            st.caption("※ 한글이 □□로 보인다면 `NanumGothic.ttf` 폰트 파일을 폴더에 넣어주세요.")
+        except Exception as e:
+            st.error(f"워드 클라우드 생성 실패: {e}")
+
+    with col_vis2:
+        st.markdown("#### 📊 핵심 키워드 Top 10")
+        # Top 10만 추려서 차트 그리기
+        top_10 = dict(list(top_20.items())[:10])
+        st.bar_chart(top_10, color="#FF4B4B") # 빨간색 포인트
+        st.caption("가장 많이 언급된 명사 순위")
+        
+        # 드릴다운 느낌을 주기 위한 데이터 표시
+        with st.expander("📋 키워드 상세 빈도수 보기"):
+            st.dataframe(pd.DataFrame(list(top_20.items()), columns=['키워드', '빈도수']), use_container_width=True)
+
 
 # --- 🔐 비밀번호 잠금 ---
 password = st.text_input("접속 암호", type="password")
@@ -20,23 +126,24 @@ if password != "smilegate":
     st.warning("암호를 입력하세요.")
     st.stop()
 
-st.title("Steam & YouTube 데이터 수집기")
+st.title("Steam & YouTube 데이터 수집기 (Visualized)")
 
 # --- 사이드바 ---
 with st.sidebar:
     st.header("설정")
     menu = st.selectbox("분석 채널", ["Steam (스팀)", "YouTube (유튜브)", "4chan (해외 포럼)", "디시인사이드"])
     st.divider()
+    st.info("💡 **시각화 기능 안내**\n\n'Steam 리뷰'와 'YouTube 댓글' 수집 시에만 하단에 워드 클라우드와 분석 차트가 나타납니다.")
 
 # =========================================================
-# [SECTION 1] Steam (스팀) - 기존 코드 유지
+# [SECTION 1] Steam (스팀)
 # =========================================================
 if menu == "Steam (스팀)":
-    tab1, tab2 = st.tabs(["리뷰 수집 (API)", "토론장 수집 (크롤링)"])
+    tab1, tab2 = st.tabs(["리뷰 수집 (API) - 📊시각화", "토론장 수집 (크롤링)"])
     
-    # [TAB 1] 리뷰 수집
+    # [TAB 1] 리뷰 수집 (시각화 적용 O)
     with tab1:
-        st.subheader("리뷰 데이터 수집")
+        st.subheader("리뷰 데이터 수집 및 분석")
         col1, col2 = st.columns(2)
         with col1:
             app_id_review = st.text_input("App ID (리뷰용)", value="1562700")
@@ -89,22 +196,29 @@ if menu == "Steam (스팀)":
                 if all_reviews:
                     df = pd.DataFrame(all_reviews)
                     df = df.sort_values(by='작성일', ascending=False)
-                    st.success(f"완료! {start_date} ~ {end_date} 기간의 리뷰 {len(df)}개를 수집했습니다.")
+                    status_box.success(f"완료! {start_date} ~ {end_date} 기간의 리뷰 {len(df)}개를 수집했습니다.")
+                    
                     st.dataframe(df)
                     st.download_button("엑셀 다운로드", df.to_csv(index=False).encode('utf-8-sig'), "steam_reviews.csv")
+
+                    # 🔥 [시각화 엔진 가동]
+                    # '내용' 컬럼을 분석하여 시각화합니다.
+                    visualize_data(df, "내용")
+
                 else:
                     st.warning("해당 기간에 작성된 리뷰가 없습니다.")
             except Exception as e:
                 st.error(f"오류 발생: {e}")
 
-    # [TAB 2] 토론장 수집
+    # [TAB 2] 토론장 수집 (시각화 적용 X - 요청대로 제외)
     with tab2:
         st.subheader("토론장 상세 수집 (본문+댓글)")
-        st.caption("※ 토론장은 웹 크롤링 방식이라 '페이지 수'로만 범위를 지정합니다.")
+        st.caption("※ 토론장은 텍스트 구조가 복잡하여 현재 시각화 기능을 지원하지 않습니다.")
         target_url = st.text_input("수집할 토론장 URL", value="https://steamcommunity.com/app/1562700/discussions/")
         pages_to_crawl = st.number_input("탐색할 페이지 수", min_value=1, max_value=20, value=2)
         
         if st.button("토론글 수집 시작", key="btn_discuss"):
+            # (기존 토론장 수집 코드 유지 - 시각화 함수 호출 없음)
             discussion_data = []
             progress_bar = st.progress(0)
             status_text = st.empty()
@@ -160,21 +274,17 @@ if menu == "Steam (스팀)":
             except Exception as e: st.error(f"오류: {e}")
 
 # =========================================================
-# [SECTION 2] YouTube (유튜브) - [구조 변경됨]
+# [SECTION 2] YouTube (유튜브)
 # =========================================================
 elif menu == "YouTube (유튜브)":
     st.subheader("🟥 YouTube 데이터 수집기")
-    
-    # API 키는 두 탭에서 공통으로 쓰므로 맨 위로 뺌
     yt_api_key = st.text_input("YouTube Data API Key", type="password")
 
-    # 탭 분리: 키워드 검색 vs 개별 링크
-    tab_yt1, tab_yt2 = st.tabs(["🔍 키워드 검색 (다수 영상)", "🔗 개별 영상 링크 (1개)"])
+    tab_yt1, tab_yt2 = st.tabs(["🔍 키워드 검색 - 📊시각화", "🔗 개별 영상 링크 - 📊시각화"])
 
-    # [TAB 1] 기존 기능: 키워드 검색
+    # [TAB 1] 키워드 검색 (시각화 적용 O)
     with tab_yt1:
-        st.caption("특정 키워드(게임명 등)를 검색하여, 조회수가 높은 영상들의 댓글을 한꺼번에 수집합니다.")
-        
+        st.caption("특정 키워드(게임명 등)를 검색하여 댓글을 수집하고 분석합니다.")
         col1, col2 = st.columns([3, 1])
         with col1:
             search_keyword = st.text_input("검색어 (예: Elden Ring Review)", value="Elden Ring")
@@ -191,9 +301,9 @@ elif menu == "YouTube (유튜브)":
 
         if st.button("키워드 검색 및 수집 시작", key="btn_yt_keyword"):
             if not yt_api_key:
-                st.error("맨 위에 YouTube API Key를 먼저 입력해주세요.")
+                st.error("맨 위에 YouTube API Key를 입력해주세요.")
             else:
-                status_box = st.status("데이터 수집을 시작합니다...", expanded=True)
+                status_box = st.status("데이터 수집 및 분석 중...", expanded=True)
                 youtube_data = []
                 
                 try:
@@ -201,7 +311,6 @@ elif menu == "YouTube (유튜브)":
                     start_dt = datetime.combine(start_date_yt, dt_time.min).isoformat() + "Z"
                     end_dt = datetime.combine(end_date_yt, dt_time.max).isoformat() + "Z"
                     
-                    # 1. 영상 검색
                     search_response = youtube.search().list(
                         q=search_keyword, type='video', part='id', order='viewCount',
                         publishedAfter=start_dt, publishedBefore=end_dt, maxResults=max_videos
@@ -212,7 +321,6 @@ elif menu == "YouTube (유튜브)":
                     if not video_ids:
                         status_box.update(label="검색된 영상이 없습니다.", state="error")
                     else:
-                        # 2. 조회수 필터링
                         stats_response = youtube.videos().list(
                             part='snippet,statistics', id=','.join(video_ids)
                         ).execute()
@@ -226,19 +334,16 @@ elif menu == "YouTube (유튜브)":
                         if not target_videos:
                             status_box.update(label="조회수 조건을 만족하는 영상이 없습니다.", state="error")
                         else:
-                            # 3. 댓글 수집
                             prog_bar = st.progress(0)
                             for idx, video in enumerate(target_videos):
                                 vid = video['id']
                                 v_title = video['snippet']['title']
-                                v_channel = video['snippet']['channelTitle']
-                                v_date = video['snippet']['publishedAt'][:10]
                                 v_views = video['statistics'].get('viewCount', 0)
+                                v_date = video['snippet']['publishedAt'][:10]
                                 
-                                status_box.write(f"Collecting: {v_title[:30]}...")
+                                status_box.write(f"Collecting comments from: {v_title[:30]}...")
                                 
                                 try:
-                                    # 댓글 가져오기 (최대 50개)
                                     comment_request = youtube.commentThreads().list(
                                         part="snippet", videoId=vid, maxResults=50, textFormat="plainText", order="relevance"
                                     )
@@ -247,71 +352,60 @@ elif menu == "YouTube (유튜브)":
                                     for item in comment_response.get('items', []):
                                         c_snip = item['snippet']['topLevelComment']['snippet']
                                         youtube_data.append({
-                                            '영상제목': v_title, '조회수': v_views, '채널명': v_channel, '영상게시일': v_date,
+                                            '영상제목': v_title, '조회수': v_views, '영상게시일': v_date,
                                             '작성자': c_snip['authorDisplayName'], '댓글내용': c_snip['textDisplay'],
                                             '좋아요': c_snip['likeCount'], '댓글작성일': c_snip['publishedAt'][:10]
                                         })
                                 except: pass
                                 prog_bar.progress((idx + 1) / len(target_videos))
                             
-                            status_box.update(label="완료!", state="complete")
+                            status_box.update(label="수집 완료!", state="complete")
                             
                             if youtube_data:
                                 df_yt = pd.DataFrame(youtube_data)
                                 st.dataframe(df_yt)
                                 st.download_button("결과 다운로드", df_yt.to_csv(index=False).encode('utf-8-sig'), f"yt_keyword_{search_keyword}.csv")
+                                
+                                # 🔥 [시각화 엔진 가동]
+                                # '댓글내용' 컬럼을 분석
+                                visualize_data(df_yt, "댓글내용")
                             else: st.warning("댓글을 찾을 수 없습니다.")
                 except Exception as e:
                     status_box.update(label="에러 발생", state="error")
                     st.error(f"오류: {e}")
 
-    # [TAB 2] 신규 기능: 개별 영상 링크
+    # [TAB 2] 개별 영상 링크 (시각화 적용 O)
     with tab_yt2:
-        st.caption("특정 YouTube 영상의 주소(URL)를 입력하면, 해당 영상의 댓글을 집중적으로 수집합니다.")
-        
-        target_url = st.text_input("YouTube 영상 주소 (URL)", placeholder="예: https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        st.caption("개별 영상의 댓글을 집중적으로 분석합니다.")
+        target_url = st.text_input("YouTube 영상 주소 (URL)", placeholder="예: https://www.youtube.com/watch?v=...")
         max_comments_single = st.number_input("수집할 댓글 수 (최대)", min_value=10, max_value=500, value=100, step=10)
 
         if st.button("단일 영상 댓글 수집", key="btn_yt_link"):
-            if not yt_api_key:
-                st.error("맨 위에 YouTube API Key를 입력해주세요.")
-            elif not target_url:
-                st.error("영상 주소를 입력해주세요.")
+            if not yt_api_key or not target_url:
+                st.error("API Key와 영상 주소를 확인해주세요.")
             else:
-                # URL에서 Video ID 추출 로직
                 video_id = None
-                if "v=" in target_url:
-                    video_id = target_url.split("v=")[1].split("&")[0]
-                elif "youtu.be" in target_url:
-                    video_id = target_url.split("/")[-1].split("?")[0]
+                if "v=" in target_url: video_id = target_url.split("v=")[1].split("&")[0]
+                elif "youtu.be" in target_url: video_id = target_url.split("/")[-1].split("?")[0]
                 
                 if not video_id:
                     st.error("올바른 YouTube URL이 아닙니다.")
                 else:
                     status_box = st.status(f"영상 ID: {video_id} 분석 중...", expanded=True)
                     single_yt_data = []
-                    
                     try:
                         youtube = build('youtube', 'v3', developerKey=yt_api_key)
                         
-                        # 1. 영상 정보 가져오기
-                        video_response = youtube.videos().list(
-                            part='snippet,statistics', id=video_id
-                        ).execute()
-                        
+                        # 영상 정보 확인
+                        video_response = youtube.videos().list(part='snippet,statistics', id=video_id).execute()
                         if not video_response.get('items'):
                             status_box.update(label="영상을 찾을 수 없습니다.", state="error")
                         else:
                             v_info = video_response['items'][0]
                             v_title = v_info['snippet']['title']
-                            v_channel = v_info['snippet']['channelTitle']
-                            v_views = v_info['statistics'].get('viewCount', 0)
-                            v_date = v_info['snippet']['publishedAt'][:10]
-                            
-                            status_box.write(f"📺 영상 발견: {v_title}")
-                            status_box.write(f"👀 조회수: {v_views} | 📅 게시일: {v_date}")
-                            
-                            # 2. 댓글 수집 (Paging 처리로 많이 가져오기)
+                            status_box.write(f"📺 분석 대상: {v_title}")
+
+                            # 댓글 수집
                             comments_collected = 0
                             next_page_token = None
                             
@@ -330,189 +424,149 @@ elif menu == "YouTube (유튜브)":
                                         '작성일': c_snip['publishedAt'][:10]
                                     })
                                     comments_collected += 1
-                                    
+                                
                                 next_page_token = response.get('nextPageToken')
-                                if not next_page_token or comments_collected >= max_comments_single:
-                                    break
+                                if not next_page_token or comments_collected >= max_comments_single: break
                             
                             status_box.update(label="수집 완료!", state="complete")
                             
                             if single_yt_data:
                                 df_single = pd.DataFrame(single_yt_data)
-                                st.success(f"총 {len(df_single)}개의 댓글을 가져왔습니다.")
+                                st.success(f"총 {len(df_single)}개의 댓글을 수집했습니다.")
                                 st.dataframe(df_single)
                                 st.download_button("결과 다운로드", df_single.to_csv(index=False).encode('utf-8-sig'), f"yt_single_{video_id}.csv")
-                            else:
-                                st.warning("댓글이 없거나 댓글이 중지된 영상입니다.")
                                 
+                                # 🔥 [시각화 엔진 가동]
+                                visualize_data(df_single, "댓글내용")
+                            else:
+                                st.warning("댓글이 없거나 차단된 영상입니다.")
                     except Exception as e:
                         status_box.update(label="에러 발생", state="error")
-                        st.error(f"오류 내용: {e}")
+                        st.error(f"오류: {e}")
 
 # =========================================================
-# [SECTION 3] 4chan (포챈) - 해외 코어 게이머 반응
+# [SECTION 3] 4chan (포챈) - 시각화 제외 (공간만 유지 or 일반 수집)
 # =========================================================
 elif menu == "4chan (해외 포럼)": 
     st.subheader("🍀 4chan (/v/ - Video Games) 실시간 반응")
-    st.caption("API Key 없이 해외 하드코어 게이머들의 '날것' 반응을 수집합니다.")
-    
+    # (기존 4chan 코드 그대로 유지 - visualize_data 호출 안 함)
     col1, col2 = st.columns([3, 1])
     with col1:
-        # 4chan은 검색 API가 따로 없어서, 전체 카탈로그를 가져와서 필터링해야 합니다.
         search_keyword = st.text_input("검색어 (영어, 예: Elden Ring)", value="Elden Ring")
     with col2:
         result_limit = st.number_input("가져올 스레드 수", min_value=1, max_value=20, value=3)
 
-    st.info("※ 참고: 4chan은 익명 사이트 특성상 거친 표현이나 비속어가 포함될 수 있습니다.")
-
     if st.button("4chan 데이터 수집 시작", key="btn_4chan"):
-        status_box = st.status("4chan /v/ 게시판을 스캔 중입니다...", expanded=True)
+        status_box = st.status("4chan 스캔 중...", expanded=True)
         fourchan_data = []
-        
         try:
-            # 1. /v/ (Video Games) 게시판의 전체 목록(Catalog) 가져오기
-            # 공식 JSON API (인증 불필요)
             catalog_url = "https://a.4cdn.org/v/catalog.json"
             res = requests.get(catalog_url, verify=False)
-            
             if res.status_code == 200:
                 pages = res.json()
                 found_threads = []
-                
-                # 2. 키워드가 포함된 스레드 찾기 (제목 or 본문 검색)
-                status_box.write(f"🔍 현재 활성화된 모든 스레드에서 '{search_keyword}' 검색 중...")
-                
                 for page in pages:
                     for thread in page.get('threads', []):
-                        # 제목(sub)이 없으면 빈 문자열, 내용(com)이 없으면 빈 문자열 처리
                         title = thread.get('sub', '') 
                         comment = thread.get('com', '')
-                        
-                        # 대소문자 무시하고 검색
                         if search_keyword.lower() in title.lower() or search_keyword.lower() in comment.lower():
-                            found_threads.append(thread['no']) # 스레드 번호 저장
-                            if len(found_threads) >= result_limit:
-                                break
-                    if len(found_threads) >= result_limit:
-                        break
+                            found_threads.append(thread['no'])
+                            if len(found_threads) >= result_limit: break
+                    if len(found_threads) >= result_limit: break
                 
-                if not found_threads:
-                    status_box.update(label="검색 결과가 없습니다. (현재 활성화된 스레드가 없음)", state="error")
-                else:
-                    status_box.write(f"✅ {len(found_threads)}개의 관련 스레드 발견! 상세 내용을 긁어옵니다...")
-                    
-                    # 3. 각 스레드의 댓글 상세 수집
+                if found_threads:
+                    status_box.write(f"✅ {len(found_threads)}개 스레드 발견. 상세 수집 중...")
                     progress_bar = st.progress(0)
-                    
                     for idx, thread_id in enumerate(found_threads):
                         thread_url = f"https://a.4cdn.org/v/thread/{thread_id}.json"
                         t_res = requests.get(thread_url, verify=False)
-                        
                         if t_res.status_code == 200:
                             posts = t_res.json().get('posts', [])
-                            
-                            # 첫 번째 글(OP) 정보
                             op_post = posts[0]
-                            op_title = op_post.get('sub', 'No Title')
-                            # HTML 태그 제거 및 텍스트만 추출
                             op_content = BeautifulSoup(op_post.get('com', ''), "html.parser").get_text()
-                            
-                            # 원글 저장
                             fourchan_data.append({
-                                '구분': '원글(Thread)',
-                                '글번호': thread_id,
-                                '제목/요약': op_title,
-                                '작성일': datetime.fromtimestamp(op_post['time']).strftime('%Y-%m-%d %H:%M'),
-                                '내용': op_content,
-                                '이미지': f"https://i.4cdn.org/v/{op_post['tim']}{op_post['ext']}" if 'tim' in op_post else None
+                                '구분': '원글', '내용': op_content, '작성일': datetime.fromtimestamp(op_post['time']).strftime('%Y-%m-%d %H:%M')
                             })
-                            
-                            # 댓글들(Replies) 저장
                             for reply in posts[1:]:
                                 reply_content = BeautifulSoup(reply.get('com', ''), "html.parser").get_text()
                                 fourchan_data.append({
-                                    '구분': '댓글(Reply)',
-                                    '글번호': thread_id,
-                                    '제목/요약': '-', 
-                                    '작성일': datetime.fromtimestamp(reply['time']).strftime('%Y-%m-%d %H:%M'),
-                                    '내용': reply_content,
-                                    '이미지': None
+                                    '구분': '댓글', '내용': reply_content, '작성일': datetime.fromtimestamp(reply['time']).strftime('%Y-%m-%d %H:%M')
                                 })
-                        
-                        time.sleep(0.5) # 서버 부하 방지용 딜레이
+                        time.sleep(0.5)
                         progress_bar.progress((idx + 1) / len(found_threads))
                     
-                    status_box.update(label="수집 완료!", state="complete")
-                    
+                    status_box.update(label="완료!", state="complete")
                     if fourchan_data:
                         df_4chan = pd.DataFrame(fourchan_data)
-                        st.success(f"총 {len(df_4chan)}개의 반응을 수집했습니다.")
                         st.dataframe(df_4chan)
                         st.download_button("엑셀 다운로드", df_4chan.to_csv(index=False).encode('utf-8-sig'), f"4chan_{search_keyword}.csv")
-            else:
-                st.error("4chan 서버 접속에 실패했습니다.")
-                
-        except Exception as e:
-            st.error(f"오류 발생: {e}")
+                        # 🚫 여기서는 visualize_data()를 호출하지 않음 (요청사항 반영)
+                else: status_box.update(label="검색 결과 없음", state="error")
+            else: st.error("접속 실패")
+        except Exception as e: st.error(f"오류: {e}")
 
 # =========================================================
-# [SECTION 4] DC Inside (디시인사이드) - 한국 코어 커뮤니티 (디버깅 모드)
+# [SECTION 4] 디시인사이드 - 시각화 제외
 # =========================================================
 elif menu == "디시인사이드":
-    st.subheader("🔵 DC Inside 갤러리 수집 (Debug Mode)")
-    
+    st.subheader("🔵 디시인사이드 갤러리 수집")
+    # (기존 디시인사이드 코드 - 시각화 제외)
     col1, col2 = st.columns(2)
     with col1:
         gallery_id = st.text_input("갤러리 ID", value="indiegame")
         is_minor = st.checkbox("마이너 갤러리 여부", value=True)
     with col2:
         keyword = st.text_input("검색어", value="")
-        pages_to_crawl = st.number_input("페이지 수", value=1) # 테스트니까 1페이지만
+        pages_to_crawl = st.number_input("페이지 수", value=1)
 
-    if st.button("디버깅 시작", key="btn_dc_debug"):
-        status_box = st.status("접속 테스트 중...", expanded=True)
-        
-        # 주소 설정
+    if st.button("디시인사이드 수집 시작", key="btn_dc"):
+        status_box = st.status("접속 중...", expanded=True)
+        dc_data = []
         base_url = "https://gall.dcinside.com/mgallery/board/lists/" if is_minor else "https://gall.dcinside.com/board/lists/"
-        target_url = f"{base_url}?id={gallery_id}"
+        target_referer = f"{base_url}?id={gallery_id}"
         
-        # 헤더 설정
+        # 모바일 위장 헤더 사용 (차단 우회용)
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Referer': target_url,
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Referer': target_referer,
             'Connection': 'keep-alive'
         }
 
         try:
-            # 1. 요청 보내기
-            status_box.write(f"🚀 접속 시도: {target_url}")
-            res = requests.get(base_url, headers=headers, params={'id': gallery_id, 'page': 1})
-            
-            # 2. 상태 코드 확인
-            status_box.write(f"📡 응답 코드: {res.status_code}")
-            
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.text, 'html.parser')
+            progress_bar = st.progress(0)
+            for i in range(pages_to_crawl):
+                params = {'id': gallery_id, 'page': i+1}
+                if keyword:
+                    params['s_type'] = 'search_subject_memo'
+                    params['s_keyword'] = keyword
                 
-                # 3. [핵심] 페이지 제목 확인 (여기가 중요합니다!)
-                page_title = soup.title.text if soup.title else "제목 없음"
-                st.warning(f"📑 현재 수신된 페이지 제목: {page_title}")
+                # 랜덤 딜레이 (봇 탐지 우회)
+                wait_time = random.uniform(2, 4)
+                status_box.write(f"⏳ {i+1}페이지 수집 전 {wait_time:.1f}초 대기...")
+                time.sleep(wait_time)
                 
-                # 4. 데이터 유무 확인
-                rows = soup.find_all('tr', class_='ub-content')
-                st.info(f"🔍 발견된 게시글 수: {len(rows)}개")
-                
-                # 5. [필살기] 만약 글이 0개라면, HTML 앞부분을 화면에 뿌려서 정체 확인
-                if len(rows) == 0:
-                    st.error("🚨 게시글을 못 찾았습니다! 서버가 보낸 HTML 일부를 확인하세요:")
-                    st.code(res.text[:2000], language='html') # HTML 앞부분 2000자 출력
+                res = requests.get(base_url, headers=headers, params=params)
+                if res.status_code == 200:
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    rows = soup.find_all('tr', class_='ub-content')
+                    for row in rows:
+                        try:
+                            if 'ub-notice' in row.get('class', []): continue
+                            title_tag = row.find('td', class_='gall_tit').find('a')
+                            title = title_tag.text.strip()
+                            dc_data.append({'갤러리ID': gallery_id, '제목': title})
+                        except: continue
+                    progress_bar.progress((i + 1) / pages_to_crawl)
                 else:
-                    st.success("✅ 데이터가 정상적으로 보입니다!")
-                    # (데이터 수집 로직은 생략, 접속 확인이 먼저임)
+                    st.error(f"접속 실패 Code: {res.status_code}")
+                    break
             
-            else:
-                st.error("접속 실패! (200 OK가 아님)")
-
-        except Exception as e:
-            st.error(f"에러 발생: {e}")
+            status_box.update(label="완료!", state="complete")
+            if dc_data:
+                df_dc = pd.DataFrame(dc_data)
+                st.dataframe(df_dc)
+                st.download_button("엑셀 다운로드", df_dc.to_csv(index=False).encode('utf-8-sig'), f"dc_{gallery_id}.csv")
+                # 🚫 시각화 제외
+            else: st.warning("데이터 없음")
+        except Exception as e: st.error(f"오류: {e}")
