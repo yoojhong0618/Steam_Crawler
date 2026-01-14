@@ -5,3 +5,6 @@ beautifulsoup4
 google-api-python-client
 pyarrow
 lxml
+kiwipiepy
+wordcloud
+matplotlib
