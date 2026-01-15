@@ -25,7 +25,6 @@ st.set_page_config(page_title="Steam & YouTube 데이터 수집기", layout="wid
 def visualize_data(df, col_name):
     """
     [Final] 언어별 독립 분석 시각화 엔진
-    사용자가 한국어/영어를 선택하면 해당 언어의 키워드만 분석하여 보여줍니다.
     """
     if df is None or df.empty:
         return
@@ -33,18 +32,20 @@ def visualize_data(df, col_name):
     st.divider()
     st.subheader(f"📊 {len(df)}개 데이터 키워드 분석")
     
-    # 1. 🎛️ 언어 선택 드롭다운 (한국어 vs 영어)
+    # 1. 🎛️ 언어 선택 드롭다운
+    # key를 지정하여 위젯 상태가 꼬이지 않게 함
     lang_option = st.selectbox(
         "분석할 언어를 선택하세요:",
         ["🇰🇷 한국어", "🇺🇸 영어"],
-        index=0
+        index=0,
+        key=f"lang_select_{random.randint(0, 10000)}" # 탭별 충돌 방지용 랜덤 키 (임시) - 실제로는 고유키 권장
     )
     
     with st.spinner(f"💬 {lang_option} 데이터를 추출하고 분석 중입니다..."):
         try:
             kiwi = Kiwi()
             
-            # 2. 불용어(Stopwords) 정의 - 언어별 분리
+            # 2. 불용어(Stopwords) 정의
             stop_words_kr = {
                 '게임', '진짜', '너무', '아니', '근데', '솔직히', '그냥', '이거', '정말', 
                 '생각', '사람', '하고', '해서', '있는', '없는', '입니다', '합니다', '그게', '존나', '때문에',
@@ -62,7 +63,6 @@ def visualize_data(df, col_name):
             text_list = df[col_name].dropna().astype(str).tolist()
             full_text = " ".join(text_list)
             
-            # 속도 최적화 (너무 긴 텍스트는 자름)
             if len(full_text) > 100000:
                 full_text = full_text[:100000]
                 st.caption("※ 데이터가 너무 많아 분석 속도를 위해 일부 텍스트만 샘플링했습니다.")
@@ -71,17 +71,14 @@ def visualize_data(df, col_name):
             tokens = kiwi.tokenize(full_text)
             keywords = []
 
-            # [핵심] 선택된 언어에 따라 로직 분리
             if lang_option == "🇰🇷 한국어":
                 for t in tokens:
-                    # 한국어 명사(NNG, NNP)만 추출
                     if t.tag in ['NNG', 'NNP'] and len(t.form) > 1:
                         if t.form not in stop_words_kr:
                             keywords.append(t.form)
                             
             elif lang_option == "🇺🇸 영어":
                 for t in tokens:
-                    # 영어 알파벳(SL)만 추출
                     if t.tag == 'SL' and len(t.form) > 2:
                         word_lower = t.form.lower()
                         if word_lower not in stop_words_en:
@@ -105,7 +102,6 @@ def visualize_data(df, col_name):
     with col_vis1:
         st.markdown(f"#### ☁️ 워드 클라우드 ({lang_option})")
         try:
-            # 폰트 설정 (GitHub에 올린 폰트 파일명과 일치해야 함)
             font_path = "NanumGothic.ttf" 
             try:
                 wc = WordCloud(
@@ -116,7 +112,6 @@ def visualize_data(df, col_name):
                     max_words=100
                 ).generate_from_frequencies(count)
             except:
-                # 폰트 파일 없을 시 기본 폰트
                 wc = WordCloud(
                     background_color='white',
                     width=600,
@@ -163,7 +158,7 @@ with st.sidebar:
 if menu == "Steam (스팀)":
     tab1, tab2 = st.tabs(["리뷰 수집 (API) - 📊시각화", "토론장 수집 (크롤링)"])
     
-    # [TAB 1] 리뷰 수집 (시각화 적용 O)
+    # [TAB 1] 리뷰 수집 (시각화 적용 O, Session State 적용)
     with tab1:
         st.subheader("리뷰 데이터 수집 및 분석")
         col1, col2 = st.columns(2)
@@ -178,6 +173,7 @@ if menu == "Steam (스팀)":
         with col_end:
             end_date = st.date_input("수집 종료 날짜", datetime.now())
         
+        # 버튼 클릭 시 수집 실행
         if st.button("리뷰 수집 시작", key="btn_review"):
             all_reviews = []
             cursor = '*'
@@ -211,7 +207,6 @@ if menu == "Steam (스팀)":
                         
                         cursor = data['cursor']
                         status_box.info(f"현재 {len(all_reviews)}개 수집됨... (현재 탐색 위치: {curr_date})")
-                        
                         if curr_date < start_date: break
                     else: break
                 
@@ -220,16 +215,24 @@ if menu == "Steam (스팀)":
                     df = df.sort_values(by='작성일', ascending=False)
                     status_box.success(f"완료! {start_date} ~ {end_date} 기간의 리뷰 {len(df)}개를 수집했습니다.")
                     
-                    st.dataframe(df)
-                    st.download_button("엑셀 다운로드", df.to_csv(index=False).encode('utf-8-sig'), "steam_reviews.csv")
-
-                    # 🔥 [시각화 엔진 가동]
-                    visualize_data(df, "내용")
-
+                    # 💡 [핵심 변경] 수집된 데이터를 Session State에 영구 저장
+                    st.session_state['steam_data'] = df
                 else:
                     st.warning("해당 기간에 작성된 리뷰가 없습니다.")
+                    if 'steam_data' in st.session_state:
+                        del st.session_state['steam_data']
             except Exception as e:
                 st.error(f"오류 발생: {e}")
+
+        # 💡 [화면 표시] 버튼 블록 밖에서 Session State에 데이터가 있으면 보여줌
+        if 'steam_data' in st.session_state and st.session_state['steam_data'] is not None:
+            df = st.session_state['steam_data']
+            st.dataframe(df)
+            st.download_button("엑셀 다운로드", df.to_csv(index=False).encode('utf-8-sig'), "steam_reviews.csv")
+            
+            # 🔥 [시각화 엔진 가동] - 이제 드롭다운 바꿔도 안 사라짐!
+            visualize_data(df, "내용")
+
 
     # [TAB 2] 토론장 수집 (시각화 적용 X)
     with tab2:
@@ -302,7 +305,7 @@ elif menu == "YouTube (유튜브)":
 
     tab_yt1, tab_yt2 = st.tabs(["🔍 키워드 검색 - 📊시각화", "🔗 개별 영상 링크 - 📊시각화"])
 
-    # [TAB 1] 키워드 검색 (시각화 적용 O)
+    # [TAB 1] 키워드 검색 (Session State 적용)
     with tab_yt1:
         st.caption("특정 키워드(게임명 등)를 검색하여 댓글을 수집하고 분석합니다.")
         col1, col2 = st.columns([3, 1])
@@ -321,7 +324,7 @@ elif menu == "YouTube (유튜브)":
 
         if st.button("키워드 검색 및 수집 시작", key="btn_yt_keyword"):
             if not yt_api_key:
-                st.error("맨 위에 YouTube API Key를 입력해주세요.")
+                st.error("맨 위에 YouTube API Key를 먼저 입력해주세요.")
             else:
                 status_box = st.status("데이터 수집 및 분석 중...", expanded=True)
                 youtube_data = []
@@ -383,17 +386,20 @@ elif menu == "YouTube (유튜브)":
                             
                             if youtube_data:
                                 df_yt = pd.DataFrame(youtube_data)
-                                st.dataframe(df_yt)
-                                st.download_button("결과 다운로드", df_yt.to_csv(index=False).encode('utf-8-sig'), f"yt_keyword_{search_keyword}.csv")
-                                
-                                # 🔥 [시각화 엔진 가동]
-                                visualize_data(df_yt, "댓글내용")
+                                st.session_state['yt_keyword_data'] = df_yt # 저장
                             else: st.warning("댓글을 찾을 수 없습니다.")
                 except Exception as e:
                     status_box.update(label="에러 발생", state="error")
                     st.error(f"오류: {e}")
 
-    # [TAB 2] 개별 영상 링크 (시각화 적용 O)
+        # 💡 [화면 표시] YouTube Keyword
+        if 'yt_keyword_data' in st.session_state and st.session_state['yt_keyword_data'] is not None:
+            df_yt = st.session_state['yt_keyword_data']
+            st.dataframe(df_yt)
+            st.download_button("결과 다운로드", df_yt.to_csv(index=False).encode('utf-8-sig'), f"yt_keyword_{search_keyword}.csv")
+            visualize_data(df_yt, "댓글내용")
+
+    # [TAB 2] 개별 영상 링크 (Session State 적용)
     with tab_yt2:
         st.caption("개별 영상의 댓글을 집중적으로 분석합니다.")
         target_url = st.text_input("YouTube 영상 주소 (URL)", placeholder="예: https://www.youtube.com/watch?v=...")
@@ -451,17 +457,20 @@ elif menu == "YouTube (유튜브)":
                             
                             if single_yt_data:
                                 df_single = pd.DataFrame(single_yt_data)
-                                st.success(f"총 {len(df_single)}개의 댓글을 수집했습니다.")
-                                st.dataframe(df_single)
-                                st.download_button("결과 다운로드", df_single.to_csv(index=False).encode('utf-8-sig'), f"yt_single_{video_id}.csv")
-                                
-                                # 🔥 [시각화 엔진 가동]
-                                visualize_data(df_single, "댓글내용")
+                                st.session_state['yt_single_data'] = df_single # 저장
                             else:
                                 st.warning("댓글이 없거나 차단된 영상입니다.")
                     except Exception as e:
                         status_box.update(label="에러 발생", state="error")
                         st.error(f"오류: {e}")
+
+        # 💡 [화면 표시] YouTube Single
+        if 'yt_single_data' in st.session_state and st.session_state['yt_single_data'] is not None:
+            df_single = st.session_state['yt_single_data']
+            st.success(f"총 {len(df_single)}개의 댓글을 수집했습니다.")
+            st.dataframe(df_single)
+            st.download_button("결과 다운로드", df_single.to_csv(index=False).encode('utf-8-sig'), f"yt_single.csv")
+            visualize_data(df_single, "댓글내용")
 
 # =========================================================
 # [SECTION 3] 4chan (포챈) - 시각화 제외
