@@ -21,68 +21,92 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 페이지 기본 설정
 st.set_page_config(page_title="Steam & YouTube 데이터 수집기", layout="wide")
 
-# --- 📊 시각화 엔진 (공통 함수) ---
+# --- 📊 시각화 엔진 (언어별 분석 기능 탑재) ---
 def visualize_data(df, col_name):
     """
-    데이터프레임과 분석할 컬럼명을 받아서 워드 클라우드와 Top 10 차트를 그립니다.
+    [Final] 언어별 독립 분석 시각화 엔진
+    사용자가 한국어/영어를 선택하면 해당 언어의 키워드만 분석하여 보여줍니다.
     """
     if df is None or df.empty:
         return
 
     st.divider()
     st.subheader(f"📊 {len(df)}개 데이터 키워드 분석")
-
-    # 분석 중 스피너 표시
-    with st.spinner("💬 텍스트를 분석하고 시각화하는 중입니다..."):
+    
+    # 1. 🎛️ 언어 선택 드롭다운 (한국어 vs 영어)
+    lang_option = st.selectbox(
+        "분석할 언어를 선택하세요:",
+        ["🇰🇷 한국어", "🇺🇸 영어"],
+        index=0
+    )
+    
+    with st.spinner(f"💬 {lang_option} 데이터를 추출하고 분석 중입니다..."):
         try:
-            # 1. 한국어 형태소 분석기 초기화
             kiwi = Kiwi()
             
-            # 2. 불용어(Stopwords) 정의 - 게임 소싱에 방해되는 단어들 제거
-            stop_words = {
-                '게임', '진짜', '너무', '아니', '근데', '솔직히', '그냥', '이거', '정말', '생각', '사람', '하고', '해서', 
-                'game', 'is', 'the', 'play', 'player', 'review', 'steam', '있는', '없는', '입니다', '합니다'
+            # 2. 불용어(Stopwords) 정의 - 언어별 분리
+            stop_words_kr = {
+                '게임', '진짜', '너무', '아니', '근데', '솔직히', '그냥', '이거', '정말', 
+                '생각', '사람', '하고', '해서', '있는', '없는', '입니다', '합니다', '그게', '존나', '때문에',
+                '스팀', '플레이', '정도', '하나', '지금', '일단', '뭔가', '보고', '하면', '해서', '하게', '같아요', '좋아요'
             }
             
-            # 3. 텍스트 합치기 및 명사 추출
-            # 데이터가 비어있지 않은 행만 가져와서 문자열로 변환
+            stop_words_en = {
+                'the', 'a', 'an', 'is', 'are', 'was', 'were', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'it', 'this', 'that',
+                'and', 'but', 'or', 'so', 'if', 'not', 'no', 'yes', 'can', 'will', 'my', 'your', 'he', 'she', 'they', 'we',
+                'game', 'games', 'play', 'playing', 'player', 'played', 'review', 'steam', 'fun', 'good', 'bad', 'best', 'like', 'just', 'more',
+                'time', 'story', 'really', 'very', 'much', 'get', 'even', 'make', 'made', 'about', 'from', 'out'
+            }
+            
+            # 3. 텍스트 전처리
             text_list = df[col_name].dropna().astype(str).tolist()
             full_text = " ".join(text_list)
             
-            # 형태소 분석 토큰화 (최대 10,000자까지만 끊어서 분석 - 속도 최적화)
-            # 너무 긴 텍스트는 앞부분 위주로 분석하여 속도를 보장합니다.
+            # 속도 최적화 (너무 긴 텍스트는 자름)
             if len(full_text) > 100000:
                 full_text = full_text[:100000]
-                st.caption("※ 데이터가 너무 많아 분석 속도를 위해 일부 텍스트만 샘플링하여 분석했습니다.")
+                st.caption("※ 데이터가 너무 많아 분석 속도를 위해 일부 텍스트만 샘플링했습니다.")
 
+            # 4. 토큰화 및 키워드 추출
             tokens = kiwi.tokenize(full_text)
-            
-            # 명사(NNG, NNP)이면서 2글자 이상이고, 불용어가 아닌 단어만 추출
-            keywords = [t.form for t in tokens if t.tag in ['NNG', 'NNP'] and len(t.form) > 1 and t.form not in stop_words]
+            keywords = []
+
+            # [핵심] 선택된 언어에 따라 로직 분리
+            if lang_option == "🇰🇷 한국어":
+                for t in tokens:
+                    # 한국어 명사(NNG, NNP)만 추출
+                    if t.tag in ['NNG', 'NNP'] and len(t.form) > 1:
+                        if t.form not in stop_words_kr:
+                            keywords.append(t.form)
+                            
+            elif lang_option == "🇺🇸 영어":
+                for t in tokens:
+                    # 영어 알파벳(SL)만 추출
+                    if t.tag == 'SL' and len(t.form) > 2:
+                        word_lower = t.form.lower()
+                        if word_lower not in stop_words_en:
+                            keywords.append(word_lower)
             
             if not keywords:
-                st.warning("분석할 유효한 키워드가 부족합니다.")
+                st.warning(f"선택하신 언어({lang_option})로 작성된 유의미한 단어를 찾을 수 없습니다.")
                 return
 
-            # 4. 빈도수 계산
+            # 5. 빈도수 계산
             count = Counter(keywords)
-            top_20 = dict(count.most_common(20)) # Top 20까지 계산
+            top_20 = dict(count.most_common(20))
 
         except Exception as e:
             st.error(f"분석 중 오류가 발생했습니다: {e}")
             return
 
-    # --- 시각화 화면 구성 (2단 컬럼) ---
+    # --- 시각화 화면 구성 ---
     col_vis1, col_vis2 = st.columns(2)
 
     with col_vis1:
-        st.markdown("#### ☁️ 워드 클라우드")
+        st.markdown(f"#### ☁️ 워드 클라우드 ({lang_option})")
         try:
-            # 폰트 설정 (Streamlit Cloud에는 한글 폰트가 없을 수 있음)
-            # 프로젝트 폴더에 'NanumGothic.ttf' 파일이 있으면 사용, 없으면 기본 폰트(깨질 수 있음)
+            # 폰트 설정 (GitHub에 올린 폰트 파일명과 일치해야 함)
             font_path = "NanumGothic.ttf" 
-            
-            # 폰트 파일 존재 여부 체크 (OS마다 다를 수 있어 try-except 처리)
             try:
                 wc = WordCloud(
                     font_path=font_path, 
@@ -92,7 +116,7 @@ def visualize_data(df, col_name):
                     max_words=100
                 ).generate_from_frequencies(count)
             except:
-                # 폰트 파일이 없으면 기본 폰트로 시도 (한글 깨짐 주의)
+                # 폰트 파일 없을 시 기본 폰트
                 wc = WordCloud(
                     background_color='white',
                     width=600,
@@ -104,19 +128,17 @@ def visualize_data(df, col_name):
             plt.imshow(wc, interpolation='bilinear')
             plt.axis('off')
             st.pyplot(fig)
-            st.caption("※ 한글이 □□로 보인다면 `NanumGothic.ttf` 폰트 파일을 폴더에 넣어주세요.")
+            if lang_option == "🇰🇷 한국어":
+                st.caption("※ 한글이 □□로 보인다면 `NanumGothic.ttf` 파일을 업로드해주세요.")
         except Exception as e:
             st.error(f"워드 클라우드 생성 실패: {e}")
 
     with col_vis2:
-        st.markdown("#### 📊 핵심 키워드 Top 10")
-        # Top 10만 추려서 차트 그리기
+        st.markdown(f"#### 📊 핵심 키워드 Top 10 ({lang_option})")
         top_10 = dict(list(top_20.items())[:10])
-        st.bar_chart(top_10, color="#FF4B4B") # 빨간색 포인트
-        st.caption("가장 많이 언급된 명사 순위")
+        st.bar_chart(top_10, color="#FF4B4B")
         
-        # 드릴다운 느낌을 주기 위한 데이터 표시
-        with st.expander("📋 키워드 상세 빈도수 보기"):
+        with st.expander("📋 상세 데이터 보기"):
             st.dataframe(pd.DataFrame(list(top_20.items()), columns=['키워드', '빈도수']), use_container_width=True)
 
 
@@ -202,7 +224,6 @@ if menu == "Steam (스팀)":
                     st.download_button("엑셀 다운로드", df.to_csv(index=False).encode('utf-8-sig'), "steam_reviews.csv")
 
                     # 🔥 [시각화 엔진 가동]
-                    # '내용' 컬럼을 분석하여 시각화합니다.
                     visualize_data(df, "내용")
 
                 else:
@@ -210,7 +231,7 @@ if menu == "Steam (스팀)":
             except Exception as e:
                 st.error(f"오류 발생: {e}")
 
-    # [TAB 2] 토론장 수집 (시각화 적용 X - 요청대로 제외)
+    # [TAB 2] 토론장 수집 (시각화 적용 X)
     with tab2:
         st.subheader("토론장 상세 수집 (본문+댓글)")
         st.caption("※ 토론장은 텍스트 구조가 복잡하여 현재 시각화 기능을 지원하지 않습니다.")
@@ -218,7 +239,6 @@ if menu == "Steam (스팀)":
         pages_to_crawl = st.number_input("탐색할 페이지 수", min_value=1, max_value=20, value=2)
         
         if st.button("토론글 수집 시작", key="btn_discuss"):
-            # (기존 토론장 수집 코드 유지 - 시각화 함수 호출 없음)
             discussion_data = []
             progress_bar = st.progress(0)
             status_text = st.empty()
@@ -367,7 +387,6 @@ elif menu == "YouTube (유튜브)":
                                 st.download_button("결과 다운로드", df_yt.to_csv(index=False).encode('utf-8-sig'), f"yt_keyword_{search_keyword}.csv")
                                 
                                 # 🔥 [시각화 엔진 가동]
-                                # '댓글내용' 컬럼을 분석
                                 visualize_data(df_yt, "댓글내용")
                             else: st.warning("댓글을 찾을 수 없습니다.")
                 except Exception as e:
@@ -445,11 +464,10 @@ elif menu == "YouTube (유튜브)":
                         st.error(f"오류: {e}")
 
 # =========================================================
-# [SECTION 3] 4chan (포챈) - 시각화 제외 (공간만 유지 or 일반 수집)
+# [SECTION 3] 4chan (포챈) - 시각화 제외
 # =========================================================
 elif menu == "4chan (해외 포럼)": 
     st.subheader("🍀 4chan (/v/ - Video Games) 실시간 반응")
-    # (기존 4chan 코드 그대로 유지 - visualize_data 호출 안 함)
     col1, col2 = st.columns([3, 1])
     with col1:
         search_keyword = st.text_input("검색어 (영어, 예: Elden Ring)", value="Elden Ring")
@@ -500,7 +518,6 @@ elif menu == "4chan (해외 포럼)":
                         df_4chan = pd.DataFrame(fourchan_data)
                         st.dataframe(df_4chan)
                         st.download_button("엑셀 다운로드", df_4chan.to_csv(index=False).encode('utf-8-sig'), f"4chan_{search_keyword}.csv")
-                        # 🚫 여기서는 visualize_data()를 호출하지 않음 (요청사항 반영)
                 else: status_box.update(label="검색 결과 없음", state="error")
             else: st.error("접속 실패")
         except Exception as e: st.error(f"오류: {e}")
@@ -510,7 +527,6 @@ elif menu == "4chan (해외 포럼)":
 # =========================================================
 elif menu == "디시인사이드":
     st.subheader("🔵 디시인사이드 갤러리 수집")
-    # (기존 디시인사이드 코드 - 시각화 제외)
     col1, col2 = st.columns(2)
     with col1:
         gallery_id = st.text_input("갤러리 ID", value="indiegame")
@@ -567,6 +583,5 @@ elif menu == "디시인사이드":
                 df_dc = pd.DataFrame(dc_data)
                 st.dataframe(df_dc)
                 st.download_button("엑셀 다운로드", df_dc.to_csv(index=False).encode('utf-8-sig'), f"dc_{gallery_id}.csv")
-                # 🚫 시각화 제외
             else: st.warning("데이터 없음")
         except Exception as e: st.error(f"오류: {e}")
